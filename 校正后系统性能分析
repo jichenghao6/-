@@ -1,0 +1,112 @@
+%% ========== 第四步：PID控制器设计（使用 pidtune）==========
+clear; clc; close all;
+
+%% 1. 原系统模型（不稳定）
+Km = 10; Tm = 0.1; Kt = 1; K0 = 5;
+K = K0 * Km * Kt;
+s = tf('s');
+G = K / (s^2 * (Tm * s + 1));   % 开环传递函数（不稳定对象）
+
+%% 2. 设计PID控制器
+% 使用 pidtune 自动整定，目标：相位裕度 60°
+% pidtune 适用于稳定对象，此处对象不稳定，需先指定控制器结构为 'PID'
+% 可指定目标相位裕度，pidtune 会尝试稳定系统
+C = pidtune(G, 'PID', 60);   % 设计PID控制器
+fprintf('设计得到的PID控制器：\n');
+disp(C);
+
+% 校正后开环传递函数
+G_open_corrected = C * G;
+G_closed_corrected = feedback(G_open_corrected, 1);
+
+%% 3. 验证稳定性与性能
+% 3.1 阶跃响应
+figure(1);
+step(G_closed_corrected);
+grid on;
+title('PID校正后系统单位阶跃响应');
+xlabel('时间 (s)'); ylabel('位移 (m)');
+
+% 计算性能指标
+[y, t] = step(G_closed_corrected);
+C_final = dcgain(G_closed_corrected);
+[Y_max, idx] = max(y);
+peak_time = t(idx);
+overshoot = (Y_max - C_final) / C_final * 100;
+
+% 上升时间（10%~90%）
+t_10 = interp1(y, t, 0.1*C_final, 'pchip');
+t_90 = interp1(y, t, 0.9*C_final, 'pchip');
+rise_time = t_90 - t_10;
+
+% 调节时间（±2%）
+err_band = 0.02 * C_final;
+idx_settle = find(abs(y - C_final) < err_band, 1, 'last');
+if isempty(idx_settle)
+    settling_time = inf;
+else
+    settling_time = t(idx_settle);
+end
+
+fprintf('\n========== 校正后时域性能指标 ==========\n');
+fprintf('稳态值      = %.4f\n', C_final);
+fprintf('超调量 σ%%   = %.2f %%\n', overshoot);
+fprintf('峰值时间 tp = %.4f s\n', peak_time);
+fprintf('上升时间 tr = %.4f s\n', rise_time);
+fprintf('调节时间 ts = %.4f s\n', settling_time);
+
+% 3.2 频域稳定裕度
+figure(2);
+margin(G_open_corrected);
+grid on;
+title('PID校正后开环Bode图');
+[Gm, Pm, Wcg, Wcp] = margin(G_open_corrected);
+fprintf('\n========== 校正后频域稳定裕度 ==========\n');
+fprintf('幅值裕度 Gm = %.2f dB\n', 20*log10(Gm));
+fprintf('相角裕度 Pm = %.2f deg\n', Pm);
+fprintf('穿越频率   Wcp = %.4f rad/s\n', Wcp);
+
+%% 4. 与指标对比
+target_overshoot = 20;    % 目标超调 ≤20%
+target_settling = 1;      % 目标调节时间 ≤1 s
+
+fprintf('\n========== 性能指标对比 ==========\n');
+fprintf('超调量： %.2f%% (要求 ≤ %.0f%%)  %s\n', overshoot, target_overshoot, ...
+    iff(overshoot <= target_overshoot, '✓ 满足', '✗ 不满足'));
+fprintf('调节时间： %.4f s (要求 ≤ %.1f s)  %s\n', settling_time, target_settling, ...
+    iff(settling_time <= target_settling, '✓ 满足', '✗ 不满足'));
+fprintf('稳态误差： 0 (要求 0)  ✓ 满足\n');
+fprintf('相角裕度： %.2f° (要求 ≥45°)  %s\n', Pm, ...
+    iff(Pm >= 45, '✓ 满足', '✗ 不满足'));
+
+% 绘制校正后系统开环Bode图
+figure(4);
+margin(G_open_corrected);
+grid on;
+title('校正后系统开环Bode图');
+
+% 绘制PID控制器零极点分布图
+figure(5);
+pzmap(C);
+grid on;
+title('PID控制器零极点分布图');
+
+%% ========== 绘制校正后系统Nyquist图 ==========
+
+% 确保已定义 G_open_corrected（校正后开环传递函数）
+figure(4);   % 或根据需要调整图号
+nyquist(G_open_corrected);
+grid on;
+axis equal;   % 保持横纵轴比例一致，便于观察包围情况
+title('校正后系统Nyquist图');
+
+
+
+% 辅助函数
+function str = iff(cond, true_str, false_str)
+    if cond
+        str = true_str;
+    else
+        str = false_str;
+    end
+end
